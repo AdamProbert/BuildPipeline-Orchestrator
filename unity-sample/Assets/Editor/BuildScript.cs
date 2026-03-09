@@ -19,7 +19,7 @@ public static class BuildScript
         if (platformIndex == -1 || platformIndex + 1 >= args.Length)
         {
             Debug.LogError("Platform not specified. Use -buildPlatform <android|ios>");
-            EditorApplication.Exit(1);
+            if (Application.isBatchMode) EditorApplication.Exit(1);
             return;
         }
 
@@ -43,7 +43,7 @@ public static class BuildScript
                 break;
             default:
                 Debug.LogError($"Unsupported platform: {platformArg}. Supported: android, ios");
-                EditorApplication.Exit(1);
+                if (Application.isBatchMode) EditorApplication.Exit(1);
                 return;
         }
 
@@ -64,12 +64,12 @@ public static class BuildScript
         if (summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded)
         {
             Debug.Log($"Build succeeded: {summary.totalSize} bytes");
-            EditorApplication.Exit(0);
+            if (Application.isBatchMode) EditorApplication.Exit(0);
         }
         else
         {
             Debug.LogError($"Build failed: {summary.result}");
-            EditorApplication.Exit(1);
+            if (Application.isBatchMode) EditorApplication.Exit(1);
         }
     }
 
