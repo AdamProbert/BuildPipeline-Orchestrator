@@ -24,7 +24,7 @@ public class PipelineWorkflow
         RetryPolicy = new RetryPolicy
         {
             MaximumAttempts = 3,
-            InitialInterval = TimeSpan.FromSeconds(5),
+            InitialInterval = timeouts.BuildRetryInterval ?? TimeoutConfig.Default.BuildRetryInterval!.Value,
             BackoffCoefficient = 2,
             NonRetryableErrorTypes = new[] { nameof(InvalidOperationException) },
         },

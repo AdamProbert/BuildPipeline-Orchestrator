@@ -5,14 +5,16 @@ public record TimeoutConfig(
     TimeSpan? BuildTimeout = null,
     TimeSpan? ReportTimeout = null,
     int LicensingMaxRetries = 5,
-    TimeSpan? LicensingRetryDelay = null)
+    TimeSpan? LicensingRetryDelay = null,
+    TimeSpan? BuildRetryInterval = null)
 {
     public static readonly TimeoutConfig Default = new(
         ValidationTimeout: TimeSpan.FromSeconds(30),
         BuildTimeout: TimeSpan.FromMinutes(30),
         ReportTimeout: TimeSpan.FromSeconds(60),
         LicensingMaxRetries: 5,
-        LicensingRetryDelay: TimeSpan.FromSeconds(30));
+        LicensingRetryDelay: TimeSpan.FromSeconds(30),
+        BuildRetryInterval: TimeSpan.FromSeconds(5));
 }
 
 public record PipelineWorkflowInput(

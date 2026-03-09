@@ -182,8 +182,9 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
     [Fact]
     public async Task PipelineWorkflow_BuildFails_ThrowsWorkflowFailedException()
     {
+        var timeouts = new TimeoutConfig(BuildRetryInterval: TimeSpan.FromMilliseconds(1));
         var input = new PipelineWorkflowInput("run-build-fail",
-            new Dictionary<string, string> { ["platforms"] = "android" });
+            new Dictionary<string, string> { ["platforms"] = "android" }, timeouts);
         var activities = CreateMockActivities(failBuild: true);
 
         var ex = await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
@@ -197,8 +198,9 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
     public async Task PipelineWorkflow_PartialPlatformFailure_FailsEntireWorkflow()
     {
         // iOS fails, Android would succeed — but parallel fan-out means the workflow fails
+        var timeouts = new TimeoutConfig(BuildRetryInterval: TimeSpan.FromMilliseconds(1));
         var input = new PipelineWorkflowInput("run-partial-fail",
-            new Dictionary<string, string> { ["platforms"] = "android,ios" });
+            new Dictionary<string, string> { ["platforms"] = "android,ios" }, timeouts);
         var activities = CreateMockActivities(failBuild: true, failPlatform: BuildPlatform.iOS);
 
         await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
@@ -223,8 +225,9 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
         mock.Setup(a => a.CleanupProjectCopyAsync(It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
+        var timeouts = new TimeoutConfig(BuildRetryInterval: TimeSpan.FromMilliseconds(1));
         var input = new PipelineWorkflowInput("run-cleanup-verify",
-            new Dictionary<string, string> { ["platforms"] = "android" });
+            new Dictionary<string, string> { ["platforms"] = "android" }, timeouts);
 
         await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
             () => RunWorkflowAsync(input, mock.Object));
