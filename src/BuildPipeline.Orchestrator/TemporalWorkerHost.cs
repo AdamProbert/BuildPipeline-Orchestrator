@@ -14,8 +14,10 @@ public sealed class TemporalWorkerHost : IHostedService
     private readonly PipelineConfig _config;
     private readonly ILogger<TemporalWorkerHost> _logger;
     private readonly IPipelineActivities _activities;
+    private CancellationTokenSource? _cts;
     private TemporalClient? _client;
     private TemporalWorker? _worker;
+    private Task? _workerTask;
 
     public TemporalWorkerHost(PipelineConfig config, ILogger<TemporalWorkerHost> logger, IPipelineActivities activities)
     {
@@ -46,7 +48,8 @@ public sealed class TemporalWorkerHost : IHostedService
                 .AddAllActivities(_activities);
 
             _worker = new TemporalWorker(_client, options);
-            _ = _worker.ExecuteAsync(cancellationToken);
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _workerTask = _worker.ExecuteAsync(_cts.Token);
 
             _logger.LogInformation("Temporal worker started");
         }
@@ -58,13 +61,32 @@ public sealed class TemporalWorkerHost : IHostedService
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Temporal worker");
 
+        if (_cts != null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+            _cts = null;
+        }
+
+        if (_workerTask != null)
+        {
+            try
+            {
+                await _workerTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during graceful shutdown
+            }
+
+            _workerTask = null;
+        }
+
         _worker = null;
         _client = null;
-
-        return Task.CompletedTask;
     }
 }

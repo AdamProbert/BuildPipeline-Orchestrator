@@ -43,6 +43,21 @@ var positionalArgs = args.Where(a => !a.StartsWith("--")).ToArray();
 var waitForResult = args.Contains("--wait", StringComparer.OrdinalIgnoreCase);
 
 var platformArg = positionalArgs.Length > 0 ? positionalArgs[0].ToLowerInvariant() : "";
+
+// Validate platform argument early, before starting the workflow
+if (!string.IsNullOrEmpty(platformArg))
+{
+    var validPlatforms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "android", "ios" };
+    foreach (var token in platformArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!validPlatforms.Contains(token))
+        {
+            logger.LogError("Unknown platform '{Platform}'. Valid values: android, ios (comma-separated for multiple)", token);
+            return 1;
+        }
+    }
+}
+
 var parameters = new Dictionary<string, string>();
 if (!string.IsNullOrEmpty(platformArg))
     parameters["platforms"] = platformArg;

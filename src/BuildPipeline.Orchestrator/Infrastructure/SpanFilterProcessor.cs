@@ -4,15 +4,14 @@ using OpenTelemetry;
 namespace BuildPipeline.Orchestrator.Infrastructure;
 
 /// <summary>
-/// Drops noisy Temporal spans (StartActivity, CompleteWorkflow) that add
-/// visual clutter without meaningful timing information.
+/// Drops the CompleteWorkflow span which is a zero-duration leaf
+/// that adds no diagnostic value.
 /// </summary>
 public sealed class SpanFilterProcessor : BaseProcessor<Activity>
 {
     public override void OnEnd(Activity data)
     {
-        if (data.DisplayName.StartsWith("StartActivity:", StringComparison.Ordinal) ||
-            data.DisplayName.StartsWith("CompleteWorkflow:", StringComparison.Ordinal))
+        if (data.DisplayName.StartsWith("CompleteWorkflow:", StringComparison.Ordinal))
         {
             data.ActivityTraceFlags &= ~ActivityTraceFlags.Recorded;
         }

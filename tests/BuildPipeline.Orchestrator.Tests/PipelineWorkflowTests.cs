@@ -11,25 +11,36 @@ using Xunit;
 
 namespace BuildPipeline.Orchestrator.Tests;
 
-public class PipelineWorkflowTests : IAsyncLifetime
+public class TemporalFixture : IAsyncLifetime
 {
-    private WorkflowEnvironment _env = null!;
+    public WorkflowEnvironment Env { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        _env = await WorkflowEnvironment.StartLocalAsync();
+        Env = await WorkflowEnvironment.StartLocalAsync();
     }
 
     public async Task DisposeAsync()
     {
-        await _env.DisposeAsync();
+        await Env.DisposeAsync();
+    }
+}
+
+public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
+{
+    private readonly WorkflowEnvironment _env;
+
+    public PipelineWorkflowTests(TemporalFixture fixture)
+    {
+        _env = fixture.Env;
     }
 
     private IPipelineActivities CreateMockActivities(
         BuildArtifactResult? androidResult = null,
         BuildArtifactResult? iosResult = null,
         bool failValidation = false,
-        bool failBuild = false)
+        bool failBuild = false,
+        BuildPlatform? failPlatform = null)
     {
         var mock = new Mock<IPipelineActivities>();
 
@@ -46,8 +57,22 @@ public class PipelineWorkflowTests : IAsyncLifetime
 
         if (failBuild)
         {
-            mock.Setup(a => a.ExecutePlatformBuildAsync(It.IsAny<PlatformBuildInput>()))
-                .ThrowsAsync(new Exception("Unity build crashed"));
+            if (failPlatform.HasValue)
+            {
+                // Fail only the specified platform, succeed on the other
+                mock.Setup(a => a.ExecutePlatformBuildAsync(It.Is<PlatformBuildInput>(p => p.Platform == failPlatform.Value)))
+                    .ThrowsAsync(new Exception($"Unity {failPlatform.Value} build crashed"));
+
+                var succeedPlatform = failPlatform.Value == BuildPlatform.Android ? BuildPlatform.iOS : BuildPlatform.Android;
+                var succeedExt = succeedPlatform == BuildPlatform.Android ? ".apk" : "";
+                mock.Setup(a => a.ExecutePlatformBuildAsync(It.Is<PlatformBuildInput>(p => p.Platform == succeedPlatform)))
+                    .ReturnsAsync(new BuildArtifactResult(succeedPlatform, $"/output/build{succeedExt}", DateTimeOffset.UtcNow));
+            }
+            else
+            {
+                mock.Setup(a => a.ExecutePlatformBuildAsync(It.IsAny<PlatformBuildInput>()))
+                    .ThrowsAsync(new Exception("Unity build crashed"));
+            }
         }
         else
         {
@@ -153,4 +178,59 @@ public class PipelineWorkflowTests : IAsyncLifetime
         await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
             () => RunWorkflowAsync(input, activities));
     }
+
+    [Fact]
+    public async Task PipelineWorkflow_BuildFails_ThrowsWorkflowFailedException()
+    {
+        var input = new PipelineWorkflowInput("run-build-fail",
+            new Dictionary<string, string> { ["platforms"] = "android" });
+        var activities = CreateMockActivities(failBuild: true);
+
+        var ex = await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
+            () => RunWorkflowAsync(input, activities));
+
+        // The inner cause should be an ActivityFailureException wrapping the build error
+        Assert.IsType<Temporalio.Exceptions.ActivityFailureException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task PipelineWorkflow_PartialPlatformFailure_FailsEntireWorkflow()
+    {
+        // iOS fails, Android would succeed — but parallel fan-out means the workflow fails
+        var input = new PipelineWorkflowInput("run-partial-fail",
+            new Dictionary<string, string> { ["platforms"] = "android,ios" });
+        var activities = CreateMockActivities(failBuild: true, failPlatform: BuildPlatform.iOS);
+
+        await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
+            () => RunWorkflowAsync(input, activities));
+    }
+
+    [Fact]
+    public async Task PipelineWorkflow_BuildFails_CleanupStillRuns()
+    {
+        var mock = new Mock<IPipelineActivities>();
+
+        mock.Setup(a => a.ValidateUnityProjectAsync(It.IsAny<PipelineWorkflowInput>()))
+            .ReturnsAsync(new ProjectMetadata("/fake/project", "6000.2.7f2", DateTimeOffset.UtcNow));
+
+        mock.Setup(a => a.PrepareProjectCopyAsync(It.IsAny<PrepareProjectCopyInput>()))
+            .ReturnsAsync((PrepareProjectCopyInput input) =>
+                $"/tmp/unity-builds/{input.RunId}-{input.Platform.ToString().ToLowerInvariant()}");
+
+        mock.Setup(a => a.ExecutePlatformBuildAsync(It.IsAny<PlatformBuildInput>()))
+            .ThrowsAsync(new Exception("Build crashed"));
+
+        mock.Setup(a => a.CleanupProjectCopyAsync(It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        var input = new PipelineWorkflowInput("run-cleanup-verify",
+            new Dictionary<string, string> { ["platforms"] = "android" });
+
+        await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
+            () => RunWorkflowAsync(input, mock.Object));
+
+        // Verify cleanup was called even though the build failed (finally semantics)
+        mock.Verify(a => a.CleanupProjectCopyAsync(It.IsAny<string>()), Times.Once);
+    }
+
 }

@@ -39,7 +39,7 @@ public class PipelineWorkflow
         },
     };
 
-    private static ActivityOptions GetCloneOptions(TimeoutConfig timeouts) => new()
+    private static ActivityOptions GetCloneOptions() => new()
     {
         StartToCloseTimeout = TimeSpan.FromMinutes(5),
         RetryPolicy = new RetryPolicy
@@ -78,6 +78,7 @@ public class PipelineWorkflow
         foreach (var platform in platforms)
         {
             buildTasks.Add(BuildWithIsolatedProjectAsync(input.RunId, platform, timeouts));
+
         }
 
         var results = await Task.WhenAll(buildTasks);
@@ -110,7 +111,7 @@ public class PipelineWorkflow
         var clonedPath = await Workflow.ExecuteActivityAsync(
             (IPipelineActivities act) => act.PrepareProjectCopyAsync(
                 new PrepareProjectCopyInput(runId, platform)),
-            GetCloneOptions(timeouts));
+            GetCloneOptions());
 
         try
         {
