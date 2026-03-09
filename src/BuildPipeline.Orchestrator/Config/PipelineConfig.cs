@@ -8,7 +8,9 @@ public sealed record PipelineConfig(
     string TemporalNamespace,
     string UnityProjectPath,
     string OutputDirectory,
-    string TaskQueue)
+    string TaskQueue,
+    string? UnityEditorPath,
+    bool SimulateBuild)
 {
     public static PipelineConfig Load(IConfiguration configuration)
     {
@@ -21,13 +23,18 @@ public sealed record PipelineConfig(
         var outputDirectory = configuration["PIPELINE_OUTPUT_DIR"]
                               ?? Path.Combine(entryDirectory, "..", "..", "..", "..", "..", "output");
         var taskQueue = configuration["PIPELINE_TASK_QUEUE"] ?? "build-pipeline-task-queue";
+        var unityEditorPath = configuration["UNITY_EDITOR_PATH"];
+        var simulateBuild = string.Equals(configuration["PIPELINE_SIMULATE"], "true",
+            StringComparison.OrdinalIgnoreCase);
 
         return new PipelineConfig(
             temporalAddress,
             temporalNamespace,
             Path.GetFullPath(unityProjectPath),
             Path.GetFullPath(outputDirectory),
-            taskQueue);
+            taskQueue,
+            unityEditorPath,
+            simulateBuild);
     }
 
     private static string GetAssemblyDirectory()

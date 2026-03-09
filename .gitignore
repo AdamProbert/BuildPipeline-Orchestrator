@@ -16,3 +16,4 @@ unity-sample/Logs/
 unity-sample/UserSettings/
 unity-sample/*.csproj
 unity-sample/*.sln
+unity-sample/.utmp/*

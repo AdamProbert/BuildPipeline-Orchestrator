@@ -1,5 +1,5 @@
-using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BuildPipeline.Orchestrator.Infrastructure;
 
@@ -25,6 +25,7 @@ public static class FileSystemUtilities
         await JsonSerializer.SerializeAsync(stream, payload, new JsonSerializerOptions
         {
             WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() },
         }, cancellationToken);
     }
 }

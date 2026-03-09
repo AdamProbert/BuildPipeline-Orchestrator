@@ -1,6 +1,5 @@
-using BuildPipeline.Orchestrator.Config;
 using BuildPipeline.Orchestrator.Activities;
-using BuildPipeline.Orchestrator.Workflows;
+using BuildPipeline.Orchestrator.Config;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -18,10 +17,14 @@ public static class Program
             })
             .ConfigureServices((context, services) =>
             {
-                services.AddSingleton(sp => PipelineConfig.Load(sp.GetRequiredService<IConfiguration>()));
-                services.AddSingleton<IPipelineActivities, PipelineActivities>();
+                var config = PipelineConfig.Load(context.Configuration);
+                services.AddSingleton(config);
 
-                // TODO: Wire up your preferred logging/telemetry providers here (e.g., structured logs, metrics exporters).
+                if (config.SimulateBuild)
+                    services.AddSingleton<IPipelineActivities, SimulatedPipelineActivities>();
+                else
+                    services.AddSingleton<IPipelineActivities, PipelineActivities>();
+
                 services.AddHostedService<TemporalWorkerHost>();
             })
             .Build();

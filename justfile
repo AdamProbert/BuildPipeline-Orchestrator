@@ -29,9 +29,25 @@ build:
 worker:
     dotnet run --project src/BuildPipeline.Orchestrator
 
+# Run the worker in simulated mode (no Unity installation required)
+worker-sim:
+    PIPELINE_SIMULATE=true dotnet run --project src/BuildPipeline.Orchestrator
+
 # Trigger a workflow for the given platform (default: android)
 run platform="android":
     dotnet run --project src/BuildPipeline.Client -- {{platform}}
+
+# End-to-end validation: trigger a workflow and wait for completion (requires a running worker)
+e2e platform="android":
+    dotnet run --project src/BuildPipeline.Client -- {{platform}} --wait
+
+# Lint: check code style and formatting (fails on violations)
+lint:
+    dotnet format --verify-no-changes --verbosity normal
+
+# Lint: auto-fix code style and formatting issues
+lint-fix:
+    dotnet format
 
 # Run tests
 test:
