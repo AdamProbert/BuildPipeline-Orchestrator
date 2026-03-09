@@ -1,0 +1,16 @@
+/node_modules
+/dist
+/temporal-data
+/.temporal
+/output
+*.log
+bin/
+obj/
+*.user
+.vs/
+.idea/
+.vscode/
+unity-sample/Library/
+unity-sample/Temp/
+unity-sample/Logs/
+unity-sample/UserSettings/
