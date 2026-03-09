@@ -10,7 +10,8 @@ public sealed record PipelineConfig(
     string OutputDirectory,
     string TaskQueue,
     string? UnityEditorPath,
-    bool SimulateBuild)
+    bool SimulateBuild,
+    string? OtlpEndpoint)
 {
     public static PipelineConfig Load(IConfiguration configuration)
     {
@@ -26,6 +27,7 @@ public sealed record PipelineConfig(
         var unityEditorPath = configuration["UNITY_EDITOR_PATH"];
         var simulateBuild = string.Equals(configuration["PIPELINE_SIMULATE"], "true",
             StringComparison.OrdinalIgnoreCase);
+        var otlpEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
 
         return new PipelineConfig(
             temporalAddress,
@@ -34,7 +36,8 @@ public sealed record PipelineConfig(
             Path.GetFullPath(outputDirectory),
             taskQueue,
             unityEditorPath,
-            simulateBuild);
+            simulateBuild,
+            otlpEndpoint);
     }
 
     private static string GetAssemblyDirectory()

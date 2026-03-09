@@ -18,6 +18,10 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
     public async Task<ProjectMetadata> ValidateUnityProjectAsync(PipelineWorkflowInput input)
     {
+        using var span = Telemetry.Source.StartActivity("ValidateUnityProject");
+        span?.SetTag("run.id", input.RunId);
+        span?.SetTag("simulated", true);
+
         _logger.LogInformation("[Simulated] Validating Unity project for run {RunId}", input.RunId);
 
         var projectDir = _config.UnityProjectPath;
@@ -40,12 +44,21 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
         }
 
         _logger.LogInformation("[Simulated] Project valid: Unity {Version}", version);
+
+        span?.SetTag("unity.version", version);
+        Telemetry.ValidationsTotal.Add(1, new KeyValuePair<string, object?>("status", "success"));
+
         return new ProjectMetadata(projectDir, version, DateTimeOffset.UtcNow);
     }
 
     public async Task<BuildArtifactResult> ExecutePlatformBuildAsync(PlatformBuildInput input)
     {
         var platformName = input.Platform.ToString().ToLowerInvariant();
+        using var span = Telemetry.Source.StartActivity("ExecutePlatformBuild");
+        span?.SetTag("run.id", input.RunId);
+        span?.SetTag("build.platform", platformName);
+        span?.SetTag("simulated", true);
+
         _logger.LogInformation("[Simulated] Starting {Platform} build for run {RunId}", platformName, input.RunId);
 
         var sw = Stopwatch.StartNew();
@@ -67,11 +80,21 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
         _logger.LogInformation("[Simulated] Completed {Platform} build in {ElapsedMs}ms -> {ArtifactPath}",
             platformName, sw.ElapsedMilliseconds, artifactPath);
 
+        span?.SetTag("build.duration_ms", sw.ElapsedMilliseconds);
+        Telemetry.BuildDuration.Record(sw.ElapsedMilliseconds, new KeyValuePair<string, object?>("platform", platformName));
+        Telemetry.BuildsTotal.Add(1,
+            new KeyValuePair<string, object?>("platform", platformName),
+            new KeyValuePair<string, object?>("status", "success"));
+
         return new BuildArtifactResult(input.Platform, artifactPath, DateTimeOffset.UtcNow);
     }
 
     public async Task<string> GenerateReportAsync(PipelineRunSummary summary)
     {
+        using var span = Telemetry.Source.StartActivity("GenerateReport");
+        span?.SetTag("run.id", summary.RunId);
+        span?.SetTag("simulated", true);
+
         _logger.LogInformation("[Simulated] Generating report for run {RunId}", summary.RunId);
 
         var reportName = FileSystemUtilities.SanitizeFileName($"report-{summary.RunId}.json");
@@ -80,6 +103,9 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
         await FileSystemUtilities.WriteJsonFileAsync(reportPath, summary);
 
         _logger.LogInformation("[Simulated] Report written to {ReportPath}", reportPath);
+
+        span?.SetTag("report.path", reportPath);
+
         return reportPath;
     }
 }

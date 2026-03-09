@@ -72,3 +72,8 @@ status:
 # View Temporal worker logs
 logs:
     docker compose logs -f temporal
+
+# Open the Aspire observability dashboard (traces, metrics, logs)
+dashboard:
+    @echo "Opening http://localhost:18888"
+    @powershell -c "Start-Process 'http://localhost:18888'"

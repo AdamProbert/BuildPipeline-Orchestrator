@@ -68,7 +68,8 @@ public class PipelineActivityTests : IDisposable
             OutputDirectory: _outputDir,
             TaskQueue: "test-queue",
             UnityEditorPath: unityEditorPath,
-            SimulateBuild: true);
+            SimulateBuild: true,
+            OtlpEndpoint: null);
 
     #region ValidateUnityProjectAsync — Real activities
 

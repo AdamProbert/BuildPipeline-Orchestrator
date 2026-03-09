@@ -1,9 +1,14 @@
 using BuildPipeline.Orchestrator.Activities;
 using BuildPipeline.Orchestrator.Config;
+using BuildPipeline.Orchestrator.Infrastructure;
 using BuildPipeline.Orchestrator.Workflows;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Temporalio.Client;
+using Temporalio.Extensions.OpenTelemetry;
 
 var configuration = new ConfigurationBuilder()
     .AddEnvironmentVariables()
@@ -13,6 +18,23 @@ using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 var logger = loggerFactory.CreateLogger("BuildPipeline.Client");
 
 var config = PipelineConfig.Load(configuration);
+
+// Set up tracing (only when OTLP endpoint is configured)
+var otlpEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+TracerProvider? tracerProvider = null;
+if (otlpEndpoint != null)
+{
+    tracerProvider = Sdk.CreateTracerProviderBuilder()
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("build-pipeline-client"))
+        .AddSource(Telemetry.ServiceName)
+        .AddSource("Temporalio")
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint))
+        .Build();
+}
+else
+{
+    logger.LogWarning("OTEL_EXPORTER_OTLP_ENDPOINT not set — tracing/metrics disabled. Set it to enable observability (e.g. http://localhost:4317).");
+}
 
 // Parse CLI arguments: [platform] [--wait]
 var positionalArgs = args.Where(a => !a.StartsWith("--")).ToArray();
@@ -34,6 +56,7 @@ try
     {
         TargetHost = config.TemporalAddress,
         Namespace = config.TemporalNamespace,
+        Interceptors = [new TracingInterceptor()],
     });
 
     var workflowId = $"pipeline-{runInput.RunId}";
@@ -60,6 +83,10 @@ catch (Exception ex)
 {
     logger.LogError(ex, "Workflow failed.");
     return 1;
+}
+finally
+{
+    tracerProvider?.Dispose();
 }
 
 return 0;

@@ -4,6 +4,7 @@ using BuildPipeline.Orchestrator.Workflows;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Temporalio.Client;
+using Temporalio.Extensions.OpenTelemetry;
 using Temporalio.Worker;
 
 namespace BuildPipeline.Orchestrator;
@@ -37,6 +38,7 @@ public sealed class TemporalWorkerHost : IHostedService
             {
                 TargetHost = _config.TemporalAddress,
                 Namespace = _config.TemporalNamespace,
+                Interceptors = [new TracingInterceptor()],
             });
 
             var options = new TemporalWorkerOptions(_config.TaskQueue)
