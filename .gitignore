@@ -14,3 +14,5 @@ unity-sample/Library/
 unity-sample/Temp/
 unity-sample/Logs/
 unity-sample/UserSettings/
+unity-sample/*.csproj
+unity-sample/*.sln
