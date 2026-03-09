@@ -35,7 +35,7 @@ worker-sim:
 
 # Trigger a workflow for the given platform (default: android)
 run platform="android":
-    dotnet run --project src/BuildPipeline.Client -- {{platform}}
+    dotnet run --no-build --project src/BuildPipeline.Client -- {{platform}}
 
 # End-to-end validation: trigger a workflow and wait for completion (requires a running worker)
 e2e platform="android":

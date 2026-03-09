@@ -39,6 +39,22 @@ public class PipelineWorkflow
         },
     };
 
+    private static ActivityOptions GetCloneOptions(TimeoutConfig timeouts) => new()
+    {
+        StartToCloseTimeout = TimeSpan.FromMinutes(5),
+        RetryPolicy = new RetryPolicy
+        {
+            MaximumAttempts = 2,
+            NonRetryableErrorTypes = new[] { nameof(InvalidOperationException) },
+        },
+    };
+
+    private static ActivityOptions GetCleanupOptions() => new()
+    {
+        StartToCloseTimeout = TimeSpan.FromMinutes(2),
+        RetryPolicy = new RetryPolicy { MaximumAttempts = 2 },
+    };
+
     [WorkflowRun]
     public async Task<PipelineRunSummary> RunAsync(PipelineWorkflowInput input)
     {
@@ -56,20 +72,16 @@ public class PipelineWorkflow
         // 2. Determine target platforms
         var platforms = ParsePlatforms(input);
 
-        // 3. Execute builds (parallel if multiple platforms)
-        var buildResults = new List<BuildArtifactResult>();
+        // 3. Clone project & build per platform (each gets an isolated copy for concurrency)
         var buildTasks = new List<Task<BuildArtifactResult>>();
 
         foreach (var platform in platforms)
         {
-            buildTasks.Add(Workflow.ExecuteActivityAsync(
-                (IPipelineActivities act) => act.ExecutePlatformBuildAsync(
-                    new PlatformBuildInput(input.RunId, platform, timeouts)),
-                GetBuildOptions(timeouts)));
+            buildTasks.Add(BuildWithIsolatedProjectAsync(input.RunId, platform, timeouts));
         }
 
         var results = await Task.WhenAll(buildTasks);
-        buildResults.AddRange(results);
+        var buildResults = new List<BuildArtifactResult>(results);
 
         Workflow.Logger.LogInformation("Builds completed: {Platforms}",
             string.Join(", ", buildResults.Select(r => r.Platform)));
@@ -90,6 +102,29 @@ public class PipelineWorkflow
             input.RunId, reportPath);
 
         return summary;
+    }
+
+    private static async Task<BuildArtifactResult> BuildWithIsolatedProjectAsync(
+        string runId, BuildPlatform platform, TimeoutConfig timeouts)
+    {
+        var clonedPath = await Workflow.ExecuteActivityAsync(
+            (IPipelineActivities act) => act.PrepareProjectCopyAsync(
+                new PrepareProjectCopyInput(runId, platform)),
+            GetCloneOptions(timeouts));
+
+        try
+        {
+            return await Workflow.ExecuteActivityAsync(
+                (IPipelineActivities act) => act.ExecutePlatformBuildAsync(
+                    new PlatformBuildInput(runId, platform, timeouts, clonedPath)),
+                GetBuildOptions(timeouts));
+        }
+        finally
+        {
+            await Workflow.ExecuteActivityAsync(
+                (IPipelineActivities act) => act.CleanupProjectCopyAsync(clonedPath),
+                GetCleanupOptions());
+        }
     }
 
     private static List<BuildPlatform> ParsePlatforms(PipelineWorkflowInput input)

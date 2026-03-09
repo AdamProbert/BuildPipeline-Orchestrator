@@ -18,9 +18,8 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
     public async Task<ProjectMetadata> ValidateUnityProjectAsync(PipelineWorkflowInput input)
     {
-        using var span = Telemetry.Source.StartActivity("ValidateUnityProject");
-        span?.SetTag("run.id", input.RunId);
-        span?.SetTag("simulated", true);
+        Activity.Current?.SetTag("run.id", input.RunId);
+        Activity.Current?.SetTag("simulated", true);
 
         _logger.LogInformation("[Simulated] Validating Unity project for run {RunId}", input.RunId);
 
@@ -45,7 +44,7 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
         _logger.LogInformation("[Simulated] Project valid: Unity {Version}", version);
 
-        span?.SetTag("unity.version", version);
+        Activity.Current?.SetTag("unity.version", version);
         Telemetry.ValidationsTotal.Add(1, new KeyValuePair<string, object?>("status", "success"));
 
         return new ProjectMetadata(projectDir, version, DateTimeOffset.UtcNow);
@@ -54,10 +53,9 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
     public async Task<BuildArtifactResult> ExecutePlatformBuildAsync(PlatformBuildInput input)
     {
         var platformName = input.Platform.ToString().ToLowerInvariant();
-        using var span = Telemetry.Source.StartActivity("ExecutePlatformBuild");
-        span?.SetTag("run.id", input.RunId);
-        span?.SetTag("build.platform", platformName);
-        span?.SetTag("simulated", true);
+        Activity.Current?.SetTag("run.id", input.RunId);
+        Activity.Current?.SetTag("build.platform", platformName);
+        Activity.Current?.SetTag("simulated", true);
 
         _logger.LogInformation("[Simulated] Starting {Platform} build for run {RunId}", platformName, input.RunId);
 
@@ -80,7 +78,7 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
         _logger.LogInformation("[Simulated] Completed {Platform} build in {ElapsedMs}ms -> {ArtifactPath}",
             platformName, sw.ElapsedMilliseconds, artifactPath);
 
-        span?.SetTag("build.duration_ms", sw.ElapsedMilliseconds);
+        Activity.Current?.SetTag("build.duration_ms", sw.ElapsedMilliseconds);
         Telemetry.BuildDuration.Record(sw.ElapsedMilliseconds, new KeyValuePair<string, object?>("platform", platformName));
         Telemetry.BuildsTotal.Add(1,
             new KeyValuePair<string, object?>("platform", platformName),
@@ -91,9 +89,8 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
     public async Task<string> GenerateReportAsync(PipelineRunSummary summary)
     {
-        using var span = Telemetry.Source.StartActivity("GenerateReport");
-        span?.SetTag("run.id", summary.RunId);
-        span?.SetTag("simulated", true);
+        Activity.Current?.SetTag("run.id", summary.RunId);
+        Activity.Current?.SetTag("simulated", true);
 
         _logger.LogInformation("[Simulated] Generating report for run {RunId}", summary.RunId);
 
@@ -104,8 +101,31 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
         _logger.LogInformation("[Simulated] Report written to {ReportPath}", reportPath);
 
-        span?.SetTag("report.path", reportPath);
+        Activity.Current?.SetTag("report.path", reportPath);
 
         return reportPath;
+    }
+
+    public Task<string> PrepareProjectCopyAsync(PrepareProjectCopyInput input)
+    {
+        var platformName = input.Platform.ToString().ToLowerInvariant();
+        var tempDir = Path.Combine(Path.GetTempPath(), "unity-builds", $"{input.RunId}-{platformName}");
+
+        _logger.LogInformation("[Simulated] Preparing project copy at {TempDir} for {Platform}", tempDir, platformName);
+
+        Directory.CreateDirectory(tempDir);
+
+        return Task.FromResult(tempDir);
+    }
+
+    public Task CleanupProjectCopyAsync(string projectCopyPath)
+    {
+        if (Directory.Exists(projectCopyPath))
+        {
+            Directory.Delete(projectCopyPath, recursive: true);
+            _logger.LogInformation("[Simulated] Cleaned up project copy at {Path}", projectCopyPath);
+        }
+
+        return Task.CompletedTask;
     }
 }

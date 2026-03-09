@@ -63,6 +63,13 @@ public class PipelineWorkflowTests : IAsyncLifetime
         mock.Setup(a => a.GenerateReportAsync(It.IsAny<PipelineRunSummary>()))
             .ReturnsAsync("/output/report.json");
 
+        mock.Setup(a => a.PrepareProjectCopyAsync(It.IsAny<PrepareProjectCopyInput>()))
+            .ReturnsAsync((PrepareProjectCopyInput input) =>
+                $"/tmp/unity-builds/{input.RunId}-{input.Platform.ToString().ToLowerInvariant()}");
+
+        mock.Setup(a => a.CleanupProjectCopyAsync(It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
         return mock.Object;
     }
 

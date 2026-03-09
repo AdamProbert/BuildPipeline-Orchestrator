@@ -57,7 +57,10 @@ public static class Program
                             tracing
                                 .SetResourceBuilder(otelResource)
                                 .AddSource(Telemetry.ServiceName)
-                                .AddSource("Temporalio")
+                                .AddSource("Temporalio.Extensions.OpenTelemetry.Client")
+                                .AddSource("Temporalio.Extensions.OpenTelemetry.Workflow")
+                                .AddSource("Temporalio.Extensions.OpenTelemetry.Activity")
+                                .AddProcessor(new SpanFilterProcessor())
                                 .AddOtlpExporter(o => o.Endpoint = new Uri(config.OtlpEndpoint));
                         })
                         .WithMetrics(metrics =>

@@ -19,9 +19,8 @@ public sealed class PipelineActivities : IPipelineActivities
 
     public async Task<ProjectMetadata> ValidateUnityProjectAsync(PipelineWorkflowInput input)
     {
-        using var span = Telemetry.Source.StartActivity("ValidateUnityProject");
-        span?.SetTag("run.id", input.RunId);
-        span?.SetTag("project.path", _config.UnityProjectPath);
+        Activity.Current?.SetTag("run.id", input.RunId);
+        Activity.Current?.SetTag("project.path", _config.UnityProjectPath);
 
         _logger.LogInformation("Validating Unity project at {ProjectPath} for run {RunId}",
             _config.UnityProjectPath, input.RunId);
@@ -60,7 +59,7 @@ public sealed class PipelineActivities : IPipelineActivities
         _logger.LogInformation("Validated project: Unity {Version} at {Path}, editor: {EditorPath}, platforms: {Platforms}",
             version, projectDir, _resolvedEditorPath, string.Join(", ", platforms));
 
-        span?.SetTag("unity.version", version);
+        Activity.Current?.SetTag("unity.version", version);
         Telemetry.ValidationsTotal.Add(1, new KeyValuePair<string, object?>("status", "success"));
 
         return new ProjectMetadata(projectDir, version, DateTimeOffset.UtcNow);
@@ -149,9 +148,8 @@ public sealed class PipelineActivities : IPipelineActivities
     public async Task<BuildArtifactResult> ExecutePlatformBuildAsync(PlatformBuildInput input)
     {
         var platformName = input.Platform.ToString().ToLowerInvariant();
-        using var span = Telemetry.Source.StartActivity("ExecutePlatformBuild");
-        span?.SetTag("run.id", input.RunId);
-        span?.SetTag("build.platform", platformName);
+        Activity.Current?.SetTag("run.id", input.RunId);
+        Activity.Current?.SetTag("build.platform", platformName);
 
         _logger.LogInformation("Starting {Platform} build for run {RunId}", platformName, input.RunId);
 
@@ -163,12 +161,13 @@ public sealed class PipelineActivities : IPipelineActivities
 
         FileSystemUtilities.EnsureDirectory(Path.GetDirectoryName(artifactPath)!);
 
-        var lockFile = Path.Combine(_config.UnityProjectPath, "Temp", "UnityLockfile");
+        var projectPath = input.ProjectPathOverride ?? _config.UnityProjectPath;
+        var lockFile = Path.Combine(projectPath, "Temp", "UnityLockfile");
         if (File.Exists(lockFile))
         {
             throw new InvalidOperationException(
                 $"Unity Editor already has this project open. Close the editor before running a build. " +
-                $"Project: {_config.UnityProjectPath}");
+                $"Project: {projectPath}");
         }
 
         var licensePath = UnityLicenseChecker.GetLicenseFilePath();
@@ -183,7 +182,7 @@ public sealed class PipelineActivities : IPipelineActivities
         var unityPath = _resolvedEditorPath
             ?? throw new InvalidOperationException("Unity editor path not resolved. Run validation first.");
         var args = $"-quit -batchmode -nographics " +
-                   $"-projectPath \"{_config.UnityProjectPath}\" " +
+                   $"-projectPath \"{projectPath}\" " +
                    $"-executeMethod BuildScript.BuildForPlatform " +
                    $"-buildPlatform {platformName} " +
                    $"-buildOutput \"{artifactPath}\"";
@@ -202,8 +201,8 @@ public sealed class PipelineActivities : IPipelineActivities
                 _logger.LogInformation("Completed {Platform} build in {ElapsedMs}ms -> {ArtifactPath}",
                     platformName, sw.ElapsedMilliseconds, artifactPath);
 
-                span?.SetTag("build.duration_ms", sw.ElapsedMilliseconds);
-                span?.SetTag("build.exit_code", 0);
+                Activity.Current?.SetTag("build.duration_ms", sw.ElapsedMilliseconds);
+                Activity.Current?.SetTag("build.exit_code", 0);
                 Telemetry.BuildDuration.Record(sw.ElapsedMilliseconds, new KeyValuePair<string, object?>("platform", platformName));
                 Telemetry.BuildsTotal.Add(1,
                     new KeyValuePair<string, object?>("platform", platformName),
@@ -226,7 +225,7 @@ public sealed class PipelineActivities : IPipelineActivities
             _logger.LogError("Unity build failed (exit code {ExitCode}).\nStdout: {Stdout}\nStderr: {Stderr}",
                 exitCode, stdout, stderr);
 
-            span?.SetTag("build.exit_code", exitCode);
+            Activity.Current?.SetTag("build.exit_code", exitCode);
             Telemetry.BuildsTotal.Add(1,
                 new KeyValuePair<string, object?>("platform", platformName),
                 new KeyValuePair<string, object?>("status", "failure"));
@@ -285,8 +284,7 @@ public sealed class PipelineActivities : IPipelineActivities
 
     public async Task<string> GenerateReportAsync(PipelineRunSummary summary)
     {
-        using var span = Telemetry.Source.StartActivity("GenerateReport");
-        span?.SetTag("run.id", summary.RunId);
+        Activity.Current?.SetTag("run.id", summary.RunId);
 
         _logger.LogInformation("Generating report for run {RunId}", summary.RunId);
 
@@ -297,8 +295,40 @@ public sealed class PipelineActivities : IPipelineActivities
 
         _logger.LogInformation("Report written to {ReportPath}", reportPath);
 
-        span?.SetTag("report.path", reportPath);
+        Activity.Current?.SetTag("report.path", reportPath);
 
         return reportPath;
+    }
+
+    public Task<string> PrepareProjectCopyAsync(PrepareProjectCopyInput input)
+    {
+        var platformName = input.Platform.ToString().ToLowerInvariant();
+        var tempDir = Path.Combine(Path.GetTempPath(), "unity-builds", $"{input.RunId}-{platformName}");
+
+        _logger.LogInformation("Cloning Unity project to {TempDir} for {Platform} build", tempDir, platformName);
+
+        FileSystemUtilities.CopyDirectory(_config.UnityProjectPath, tempDir, excludeDirs: ["Temp"]);
+
+        return Task.FromResult(tempDir);
+    }
+
+    public Task CleanupProjectCopyAsync(string projectCopyPath)
+    {
+        var expectedBase = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "unity-builds"));
+        var fullPath = Path.GetFullPath(projectCopyPath);
+
+        if (!fullPath.StartsWith(expectedBase, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Refusing to delete path outside temp directory: {Path}", projectCopyPath);
+            return Task.CompletedTask;
+        }
+
+        if (Directory.Exists(fullPath))
+        {
+            _logger.LogInformation("Cleaning up cloned project at {Path}", fullPath);
+            Directory.Delete(fullPath, recursive: true);
+        }
+
+        return Task.CompletedTask;
     }
 }

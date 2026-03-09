@@ -88,10 +88,13 @@ public static class PlatformRegistry
     }
 }
 
+public record PrepareProjectCopyInput(string RunId, BuildPlatform Platform);
+
 public record PlatformBuildInput(
     string RunId,
     BuildPlatform Platform,
-    TimeoutConfig? Timeouts = null);
+    TimeoutConfig? Timeouts = null,
+    string? ProjectPathOverride = null);
 
 public record BuildArtifactResult(
     BuildPlatform Platform,

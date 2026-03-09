@@ -392,4 +392,96 @@ public class PipelineActivityTests : IDisposable
     }
 
     #endregion
+
+    #region PrepareProjectCopyAsync / CleanupProjectCopyAsync
+
+    [Fact]
+    public async Task PrepareProjectCopy_ClonesProjectToTempDir()
+    {
+        var projectDir = CreateFakeUnityProject();
+        // Add a Temp dir (should be excluded from clone)
+        Directory.CreateDirectory(Path.Combine(projectDir, "Temp"));
+        File.WriteAllText(Path.Combine(projectDir, "Temp", "UnityLockfile"), "locked");
+
+        var sut = new SimulatedPipelineActivities(
+            ConfigFor(projectDir),
+            NullLogger<SimulatedPipelineActivities>.Instance);
+        var input = new PrepareProjectCopyInput("clone-run", BuildPlatform.Android);
+
+        var clonedPath = await sut.PrepareProjectCopyAsync(input);
+
+        try
+        {
+            Assert.True(Directory.Exists(clonedPath));
+            Assert.Contains("clone-run-android", clonedPath);
+        }
+        finally
+        {
+            if (Directory.Exists(clonedPath))
+                Directory.Delete(clonedPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CleanupProjectCopy_RemovesDirectory()
+    {
+        var projectDir = CreateFakeUnityProject();
+        var sut = new SimulatedPipelineActivities(
+            ConfigFor(projectDir),
+            NullLogger<SimulatedPipelineActivities>.Instance);
+        var input = new PrepareProjectCopyInput("cleanup-run", BuildPlatform.iOS);
+
+        var clonedPath = await sut.PrepareProjectCopyAsync(input);
+        Assert.True(Directory.Exists(clonedPath));
+
+        await sut.CleanupProjectCopyAsync(clonedPath);
+        Assert.False(Directory.Exists(clonedPath));
+    }
+
+    [Fact]
+    public async Task RealPrepareProjectCopy_ExcludesTempDir()
+    {
+        var projectDir = CreateFakeUnityProject();
+        // Simulate Unity lock file in Temp
+        var tempDir = Path.Combine(projectDir, "Temp");
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "UnityLockfile"), "locked");
+
+        var editorPath = CreateFakeUnityEditor("AndroidPlayer");
+        var sut = new PipelineActivities(
+            ConfigFor(projectDir, editorPath),
+            NullLogger<PipelineActivities>.Instance);
+        var input = new PrepareProjectCopyInput("real-clone-run", BuildPlatform.Android);
+
+        var clonedPath = await sut.PrepareProjectCopyAsync(input);
+
+        try
+        {
+            Assert.True(Directory.Exists(clonedPath));
+            Assert.True(Directory.Exists(Path.Combine(clonedPath, "Assets")));
+            Assert.True(Directory.Exists(Path.Combine(clonedPath, "ProjectSettings")));
+            // Temp dir should NOT be copied
+            Assert.False(Directory.Exists(Path.Combine(clonedPath, "Temp")));
+        }
+        finally
+        {
+            if (Directory.Exists(clonedPath))
+                Directory.Delete(clonedPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RealCleanupProjectCopy_RefusesPathOutsideTempDir()
+    {
+        var projectDir = CreateFakeUnityProject();
+        var sut = new PipelineActivities(
+            ConfigFor(projectDir),
+            NullLogger<PipelineActivities>.Instance);
+
+        // Should not delete an arbitrary path
+        await sut.CleanupProjectCopyAsync(projectDir);
+        Assert.True(Directory.Exists(projectDir));
+    }
+
+    #endregion
 }

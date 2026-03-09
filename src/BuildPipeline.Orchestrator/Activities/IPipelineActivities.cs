@@ -12,4 +12,10 @@ public interface IPipelineActivities
 
     [Activity]
     Task<string> GenerateReportAsync(PipelineRunSummary summary);
+
+    [Activity]
+    Task<string> PrepareProjectCopyAsync(PrepareProjectCopyInput input);
+
+    [Activity]
+    Task CleanupProjectCopyAsync(string projectCopyPath);
 }

@@ -27,7 +27,9 @@ if (otlpEndpoint != null)
     tracerProvider = Sdk.CreateTracerProviderBuilder()
         .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("build-pipeline-client"))
         .AddSource(Telemetry.ServiceName)
-        .AddSource("Temporalio")
+        .AddSource("Temporalio.Extensions.OpenTelemetry.Client")
+        .AddSource("Temporalio.Extensions.OpenTelemetry.Workflow")
+        .AddSource("Temporalio.Extensions.OpenTelemetry.Activity")
         .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint))
         .Build();
 }
