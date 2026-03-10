@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using BuildPipeline.Orchestrator.Activities;
 using BuildPipeline.Orchestrator.Config;
+using BuildPipeline.Orchestrator.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -25,7 +27,22 @@ public class PipelineActivityTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))
+        {
+            RemoveAllJunctions(_tempDir);
             Directory.Delete(_tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>Recursively find and remove junctions so Directory.Delete doesn't follow into targets.</summary>
+    private static void RemoveAllJunctions(string root)
+    {
+        foreach (var dir in Directory.GetDirectories(root))
+        {
+            if (FileSystemUtilities.IsJunction(dir))
+                Directory.Delete(dir, false);
+            else
+                RemoveAllJunctions(dir);
+        }
     }
 
     private string CreateFakeUnityProject(string? editorVersion = "6000.2.7f2")
@@ -60,7 +77,7 @@ public class PipelineActivityTests : IDisposable
         return editorExe;
     }
 
-    private PipelineConfig ConfigFor(string unityProjectPath, string? unityEditorPath = null) =>
+    private PipelineConfig ConfigFor(string unityProjectPath, string? unityEditorPath = null, ProjectCopyStrategy copyStrategy = ProjectCopyStrategy.Junction) =>
         new(
             TemporalAddress: "localhost:7233",
             TemporalNamespace: "default",
@@ -69,7 +86,9 @@ public class PipelineActivityTests : IDisposable
             TaskQueue: "test-queue",
             UnityEditorPath: unityEditorPath,
             SimulateBuild: true,
-            OtlpEndpoint: null);
+            OtlpEndpoint: null,
+            CopyStrategy: copyStrategy,
+            JunctionDirs: new HashSet<string>(["Assets", "Packages", "ProjectSettings"], StringComparer.OrdinalIgnoreCase));
 
     #region ValidateUnityProjectAsync — Real activities
 
@@ -466,7 +485,10 @@ public class PipelineActivityTests : IDisposable
         finally
         {
             if (Directory.Exists(clonedPath))
+            {
+                RemoveAllJunctions(clonedPath);
                 Directory.Delete(clonedPath, recursive: true);
+            }
         }
     }
 
@@ -481,6 +503,141 @@ public class PipelineActivityTests : IDisposable
         // Should not delete an arbitrary path
         await sut.CleanupProjectCopyAsync(projectDir);
         Assert.True(Directory.Exists(projectDir));
+    }
+
+    [SkippableFact]
+    public void TryCreateJunction_CreatesWorkingJunction()
+    {
+        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Junctions are Windows-only");
+
+        var sourceDir = Path.Combine(_tempDir, "junction-source");
+        Directory.CreateDirectory(sourceDir);
+        File.WriteAllText(Path.Combine(sourceDir, "test.txt"), "hello");
+
+        var junctionPath = Path.Combine(_tempDir, "junction-link");
+
+        var created = FileSystemUtilities.TryCreateJunction(junctionPath, sourceDir);
+
+        Assert.True(created);
+        Assert.True(FileSystemUtilities.IsJunction(junctionPath));
+        // Can read files through the junction
+        Assert.Equal("hello", File.ReadAllText(Path.Combine(junctionPath, "test.txt")));
+    }
+
+    [SkippableFact]
+    public void JunctionDeletion_DoesNotDeleteOriginal()
+    {
+        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Junctions are Windows-only");
+
+        var sourceDir = Path.Combine(_tempDir, "junction-original");
+        Directory.CreateDirectory(sourceDir);
+        File.WriteAllText(Path.Combine(sourceDir, "keep.txt"), "preserve me");
+
+        var junctionPath = Path.Combine(_tempDir, "junction-to-delete");
+        FileSystemUtilities.TryCreateJunction(junctionPath, sourceDir);
+
+        // Delete the junction
+        Directory.Delete(junctionPath, false);
+
+        // Original must survive
+        Assert.False(Directory.Exists(junctionPath));
+        Assert.True(Directory.Exists(sourceDir));
+        Assert.True(File.Exists(Path.Combine(sourceDir, "keep.txt")));
+    }
+
+    [SkippableFact]
+    public void CopyDirectoryHybrid_CreatesJunctionsForSpecifiedDirs()
+    {
+        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Junctions are Windows-only");
+
+        var sourceDir = Path.Combine(_tempDir, "hybrid-source");
+        Directory.CreateDirectory(Path.Combine(sourceDir, "Assets", "Scripts"));
+        File.WriteAllText(Path.Combine(sourceDir, "Assets", "Scripts", "Main.cs"), "code");
+        Directory.CreateDirectory(Path.Combine(sourceDir, "Library"));
+        File.WriteAllText(Path.Combine(sourceDir, "Library", "cache.db"), "data");
+        File.WriteAllText(Path.Combine(sourceDir, "root.txt"), "root");
+
+        var destDir = Path.Combine(_tempDir, "hybrid-dest");
+
+        FileSystemUtilities.CopyDirectoryHybrid(
+            sourceDir, destDir,
+            junctionDirs: ["Assets"],
+            excludeDirs: ["Temp"]);
+
+        // Assets should be a junction
+        Assert.True(FileSystemUtilities.IsJunction(Path.Combine(destDir, "Assets")));
+        // Library should be a real copy
+        Assert.False(FileSystemUtilities.IsJunction(Path.Combine(destDir, "Library")));
+        Assert.True(File.Exists(Path.Combine(destDir, "Library", "cache.db")));
+        // Root files should be copied
+        Assert.True(File.Exists(Path.Combine(destDir, "root.txt")));
+        // Can read through junction
+        Assert.Equal("code", File.ReadAllText(Path.Combine(destDir, "Assets", "Scripts", "Main.cs")));
+    }
+
+    [SkippableFact]
+    public async Task PrepareProjectCopy_UsesJunctionsForReadOnlyDirs()
+    {
+        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Junctions are Windows-only");
+
+        var projectDir = CreateFakeUnityProject();
+        // Add Packages dir (junction candidate) and Library (must be copied)
+        Directory.CreateDirectory(Path.Combine(projectDir, "Packages"));
+        File.WriteAllText(Path.Combine(projectDir, "Packages", "manifest.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(projectDir, "Library"));
+        File.WriteAllText(Path.Combine(projectDir, "Library", "ArtifactDB"), "db");
+
+        var editorPath = CreateFakeUnityEditor("AndroidPlayer");
+        var sut = new PipelineActivities(
+            ConfigFor(projectDir, editorPath),
+            NullLogger<PipelineActivities>.Instance);
+        var input = new PrepareProjectCopyInput("junction-run", BuildPlatform.Android);
+
+        var clonedPath = await sut.PrepareProjectCopyAsync(input);
+
+        try
+        {
+            // Assets and Packages should be junctions
+            Assert.True(FileSystemUtilities.IsJunction(Path.Combine(clonedPath, "Assets")));
+            Assert.True(FileSystemUtilities.IsJunction(Path.Combine(clonedPath, "Packages")));
+            Assert.True(FileSystemUtilities.IsJunction(Path.Combine(clonedPath, "ProjectSettings")));
+            // Library should be a real copy
+            Assert.False(FileSystemUtilities.IsJunction(Path.Combine(clonedPath, "Library")));
+            Assert.True(File.Exists(Path.Combine(clonedPath, "Library", "ArtifactDB")));
+        }
+        finally
+        {
+            await sut.CleanupProjectCopyAsync(clonedPath);
+        }
+    }
+
+    [SkippableFact]
+    public async Task CleanupProjectCopy_WithJunctions_PreservesOriginals()
+    {
+        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Junctions are Windows-only");
+
+        var projectDir = CreateFakeUnityProject();
+        Directory.CreateDirectory(Path.Combine(projectDir, "Packages"));
+        File.WriteAllText(Path.Combine(projectDir, "Packages", "manifest.json"), "{}");
+
+        var editorPath = CreateFakeUnityEditor("AndroidPlayer");
+        var sut = new PipelineActivities(
+            ConfigFor(projectDir, editorPath),
+            NullLogger<PipelineActivities>.Instance);
+        var input = new PrepareProjectCopyInput("cleanup-junction-run", BuildPlatform.iOS);
+
+        var clonedPath = await sut.PrepareProjectCopyAsync(input);
+
+        // Cleanup
+        await sut.CleanupProjectCopyAsync(clonedPath);
+
+        // Cloned dir should be gone
+        Assert.False(Directory.Exists(clonedPath));
+        // Original project must be intact
+        Assert.True(Directory.Exists(Path.Combine(projectDir, "Assets")));
+        Assert.True(Directory.Exists(Path.Combine(projectDir, "Packages")));
+        Assert.True(File.Exists(Path.Combine(projectDir, "Packages", "manifest.json")));
+        Assert.True(Directory.Exists(Path.Combine(projectDir, "ProjectSettings")));
     }
 
     #endregion

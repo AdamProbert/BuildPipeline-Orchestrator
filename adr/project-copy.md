@@ -81,3 +81,41 @@ Two concurrent Unity instances cannot share these files.
 - **~90% reduction in copy size** — only Library (~30-50% of project) is copied; Assets (~50-60%) is junctioned
 - **Near-instant junction creation** — metadata-only operation regardless of directory size
 - **Zero Windows configuration required** — works out of the box on NTFS
+
+---
+
+## Update: Configurable Copy Strategy (2026-03-10)
+
+The copy strategy is now configurable at the worker level via the `PIPELINE_COPY_STRATEGY` environment variable, rather than being hardcoded to the junction-based hybrid approach.
+
+**Values**:
+
+| Value | Behaviour |
+|-------|-----------|
+| `junction` (default) | Hybrid copy — NTFS junctions for read-only dirs, hard copy for writable dirs |
+| `full` | Plain recursive `File.Copy` — no OS-specific features, works on any filesystem |
+
+**Rationale**: Not all environments support NTFS junctions (e.g., CI runners on Linux, non-NTFS volumes). Making the strategy configurable lets operators choose the right mode without code changes.
+
+**Changes**:
+- `PipelineConfig` — added `ProjectCopyStrategy` enum and `CopyStrategy` field (read from `PIPELINE_COPY_STRATEGY`)
+- `PipelineActivities.PrepareProjectCopyAsync` — branches on `_config.CopyStrategy`
+- `justfile` — added `worker-full` recipe (`PIPELINE_COPY_STRATEGY=full`)
+- `README.md` — documented the new env var and command
+
+---
+
+## Update: Configurable Junction Directories (2026-03-10)
+
+The set of directories that are junctioned (rather than hard-copied) is now configurable via `PIPELINE_JUNCTION_DIRS`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PIPELINE_JUNCTION_DIRS` | `Assets,Packages,ProjectSettings` | Comma-separated directory names to junction instead of copy |
+
+**Rationale**: Different Unity projects may have additional read-only directories (e.g., vendored plugin folders) or may need to exclude a default directory from junctioning if a build step writes to it.
+
+**Changes**:
+- `PipelineConfig` — added `JunctionDirs` (`HashSet<string>`) parsed from `PIPELINE_JUNCTION_DIRS`; defaults moved from `FileSystemUtilities` into `PipelineConfig`
+- `FileSystemUtilities` — removed static `JunctionSafeDirs` field; `CopyDirectoryHybrid` now requires the junction set to be passed explicitly
+- `PipelineActivities` — passes `_config.JunctionDirs` to `CopyDirectoryHybrid`

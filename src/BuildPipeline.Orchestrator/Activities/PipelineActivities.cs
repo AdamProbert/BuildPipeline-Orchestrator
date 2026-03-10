@@ -181,8 +181,11 @@ public sealed class PipelineActivities : IPipelineActivities
 
         var unityPath = _resolvedEditorPath
             ?? throw new InvalidOperationException("Unity editor path not resolved. Run validation first.");
+        var logFile = Path.Combine(projectPath, "Logs", $"build-{platformName}.log");
+        FileSystemUtilities.EnsureDirectory(Path.GetDirectoryName(logFile)!);
         var args = $"-quit -batchmode -nographics " +
                    $"-projectPath \"{projectPath}\" " +
+                   $"-logFile \"{logFile}\" " +
                    $"-executeMethod BuildScript.BuildForPlatform " +
                    $"-buildPlatform {platformName} " +
                    $"-buildOutput \"{artifactPath}\"";
@@ -193,7 +196,7 @@ public sealed class PipelineActivities : IPipelineActivities
 
         for (var attempt = 1; attempt <= maxLicensingRetries + 1; attempt++)
         {
-            var (exitCode, stdout, stderr) = await RunUnityProcessAsync(unityPath, args);
+            var (exitCode, stdout, stderr) = await RunUnityProcessAsync(unityPath, args, logFile);
 
             if (exitCode == 0)
             {
@@ -242,7 +245,7 @@ public sealed class PipelineActivities : IPipelineActivities
         throw new InvalidOperationException("Unexpected state in build retry loop.");
     }
 
-    private async Task<(int ExitCode, string Stdout, string Stderr)> RunUnityProcessAsync(string unityPath, string args)
+    private async Task<(int ExitCode, string Stdout, string Stderr)> RunUnityProcessAsync(string unityPath, string args, string logFilePath)
     {
         _logger.LogInformation("Invoking Unity: {UnityPath} {Args}", unityPath, args);
 
@@ -264,9 +267,61 @@ public sealed class PipelineActivities : IPipelineActivities
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
 
+        // Tail the Unity editor log file in the background, forwarding lines through
+        // ILogger so they inherit the current Activity trace/span IDs.
+        using var tailCts = new CancellationTokenSource();
+        var tailTask = TailUnityLogAsync(logFilePath, tailCts.Token);
+
         await process.WaitForExitAsync();
 
+        // Give the tail a moment to flush remaining lines, then stop
+        await Task.Delay(500);
+        tailCts.Cancel();
+        try { await tailTask; } catch (OperationCanceledException) { }
+
         return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
+    private async Task TailUnityLogAsync(string logFilePath, CancellationToken ct)
+    {
+        // Wait for Unity to create the log file
+        for (var i = 0; i < 60 && !File.Exists(logFilePath); i++)
+        {
+            await Task.Delay(500, ct);
+        }
+
+        if (!File.Exists(logFilePath))
+        {
+            _logger.LogWarning("Unity log file not created after 30s: {Path}", logFilePath);
+            return;
+        }
+
+        using var stream = new FileStream(logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+
+        while (!ct.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (line != null)
+            {
+                // Classify Unity log lines by severity
+                if (line.Contains("Error", StringComparison.OrdinalIgnoreCase)
+                    || line.StartsWith("Crash", StringComparison.OrdinalIgnoreCase))
+                    _logger.LogError("[Unity] {Line}", line);
+                else if (line.Contains("Warning", StringComparison.OrdinalIgnoreCase))
+                    _logger.LogWarning("[Unity] {Line}", line);
+                else
+                    _logger.LogInformation("[Unity] {Line}", line);
+
+                // Heartbeat Temporal so long-running builds don't time out
+                Temporalio.Activities.ActivityExecutionContext.Current.Heartbeat();
+            }
+            else
+            {
+                // No new data — poll interval
+                await Task.Delay(1000, ct);
+            }
+        }
     }
 
     private static bool IsLicensingError(string stdout, string stderr)
@@ -305,9 +360,27 @@ public sealed class PipelineActivities : IPipelineActivities
         var platformName = input.Platform.ToString().ToLowerInvariant();
         var tempDir = Path.Combine(Path.GetTempPath(), "unity-builds", $"{input.RunId}-{platformName}");
 
-        _logger.LogInformation("Cloning Unity project to {TempDir} for {Platform} build", tempDir, platformName);
+        switch (_config.CopyStrategy)
+        {
+            case ProjectCopyStrategy.Junction:
+                _logger.LogInformation(
+                    "Cloning Unity project to {TempDir} for {Platform} build (hybrid copy with junctions)",
+                    tempDir, platformName);
+                FileSystemUtilities.CopyDirectoryHybrid(
+                    _config.UnityProjectPath, tempDir,
+                    junctionDirs: _config.JunctionDirs,
+                    excludeDirs: ["Temp"]);
+                break;
 
-        FileSystemUtilities.CopyDirectory(_config.UnityProjectPath, tempDir, excludeDirs: ["Temp"]);
+            default:
+                _logger.LogInformation(
+                    "Cloning Unity project to {TempDir} for {Platform} build (full copy)",
+                    tempDir, platformName);
+                FileSystemUtilities.CopyDirectory(
+                    _config.UnityProjectPath, tempDir,
+                    excludeDirs: ["Temp"]);
+                break;
+        }
 
         return Task.FromResult(tempDir);
     }
@@ -326,9 +399,23 @@ public sealed class PipelineActivities : IPipelineActivities
         if (Directory.Exists(fullPath))
         {
             _logger.LogInformation("Cleaning up cloned project at {Path}", fullPath);
+            // Remove junctions first so recursive delete doesn't follow them into original dirs
+            RemoveJunctions(fullPath);
             Directory.Delete(fullPath, recursive: true);
         }
 
         return Task.CompletedTask;
+    }
+
+    private static void RemoveJunctions(string directory)
+    {
+        foreach (var subDir in Directory.GetDirectories(directory))
+        {
+            if (FileSystemUtilities.IsJunction(subDir))
+            {
+                // Delete the junction reparse point itself (does not follow into target)
+                Directory.Delete(subDir, false);
+            }
+        }
     }
 }

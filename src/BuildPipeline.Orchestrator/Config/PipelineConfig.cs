@@ -3,6 +3,14 @@ using Microsoft.Extensions.Configuration;
 
 namespace BuildPipeline.Orchestrator.Config;
 
+public enum ProjectCopyStrategy
+{
+    /// <summary>Full recursive file copy (works everywhere, no OS-specific features).</summary>
+    Full,
+    /// <summary>NTFS junctions for read-only dirs, hard copy for writable dirs (Windows only, falls back to Full).</summary>
+    Junction
+}
+
 public sealed record PipelineConfig(
     string TemporalAddress,
     string TemporalNamespace,
@@ -11,8 +19,13 @@ public sealed record PipelineConfig(
     string TaskQueue,
     string? UnityEditorPath,
     bool SimulateBuild,
-    string? OtlpEndpoint)
+    string? OtlpEndpoint,
+    ProjectCopyStrategy CopyStrategy,
+    HashSet<string> JunctionDirs)
 {
+    private static readonly HashSet<string> DefaultJunctionDirs =
+        new(["Assets", "Packages", "ProjectSettings"], StringComparer.OrdinalIgnoreCase);
+
     public static PipelineConfig Load(IConfiguration configuration)
     {
         var entryDirectory = GetAssemblyDirectory();
@@ -28,6 +41,13 @@ public sealed record PipelineConfig(
         var simulateBuild = string.Equals(configuration["PIPELINE_SIMULATE"], "true",
             StringComparison.OrdinalIgnoreCase);
         var otlpEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+        var copyStrategy = Enum.TryParse<ProjectCopyStrategy>(configuration["PIPELINE_COPY_STRATEGY"], ignoreCase: true, out var cs)
+            ? cs
+            : ProjectCopyStrategy.Junction;
+        var junctionDirsRaw = configuration["PIPELINE_JUNCTION_DIRS"];
+        var junctionDirs = string.IsNullOrWhiteSpace(junctionDirsRaw)
+            ? DefaultJunctionDirs
+            : new HashSet<string>(junctionDirsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
 
         return new PipelineConfig(
             temporalAddress,
@@ -37,7 +57,9 @@ public sealed record PipelineConfig(
             taskQueue,
             unityEditorPath,
             simulateBuild,
-            otlpEndpoint);
+            otlpEndpoint,
+            copyStrategy,
+            junctionDirs);
     }
 
     private static string GetAssemblyDirectory()

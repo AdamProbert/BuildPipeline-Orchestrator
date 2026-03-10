@@ -76,6 +76,7 @@ Run `just` to list available commands:
 | `just setup` | Start infra + restore + build |
 | `just worker` | Run the Temporal worker |
 | `just worker-sim` | Run worker in simulated mode |
+| `just worker-full` | Run worker with full (non-junction) copies |
 | `just run <platform>` | Trigger a workflow (fire-and-forget) |
 | `just e2e <platform>` | Trigger and wait for completion |
 | `just test` | Run unit + integration tests |
@@ -104,3 +105,5 @@ All config is via environment variables:
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace |
 | `PIPELINE_TASK_QUEUE` | `build-pipeline-task-queue` | Temporal task queue name |
+| `PIPELINE_COPY_STRATEGY` | `junction` | Project copy strategy: `junction` (NTFS junctions for read-only dirs, Windows) or `full` (plain recursive copy) |
+| `PIPELINE_JUNCTION_DIRS` | `Assets,Packages,ProjectSettings` | Comma-separated list of directories to junction instead of copy (used when strategy is `junction`) |

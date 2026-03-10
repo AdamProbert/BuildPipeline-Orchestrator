@@ -21,6 +21,7 @@ public class PipelineWorkflow
     private static ActivityOptions GetBuildOptions(TimeoutConfig timeouts) => new()
     {
         StartToCloseTimeout = timeouts.BuildTimeout ?? TimeoutConfig.Default.BuildTimeout!.Value,
+        HeartbeatTimeout = TimeSpan.FromMinutes(5),
         RetryPolicy = new RetryPolicy
         {
             MaximumAttempts = 3,

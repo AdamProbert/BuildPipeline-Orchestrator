@@ -27,19 +27,19 @@ build:
 
 # Run the orchestration worker
 worker:
-    dotnet run --project src/BuildPipeline.Orchestrator
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 dotnet run --project src/BuildPipeline.Orchestrator
 
 # Run the worker in simulated mode (no Unity installation required)
 worker-sim:
-    PIPELINE_SIMULATE=true dotnet run --project src/BuildPipeline.Orchestrator
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 PIPELINE_SIMULATE=true dotnet run --project src/BuildPipeline.Orchestrator
 
 # Trigger a workflow for the given platform (default: android)
 run platform="android":
-    dotnet run --no-build --project src/BuildPipeline.Client -- {{platform}}
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 dotnet run --no-build --project src/BuildPipeline.Client -- {{platform}}
 
 # End-to-end validation: trigger a workflow and wait for completion (requires a running worker)
 e2e platform="android":
-    dotnet run --project src/BuildPipeline.Client -- {{platform}} --wait
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 dotnet run --project src/BuildPipeline.Client -- {{platform}} --wait
 
 # Lint: check code style and formatting (fails on violations)
 lint:
