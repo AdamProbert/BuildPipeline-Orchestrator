@@ -33,12 +33,3 @@ just run android     # terminal 2 – trigger a build workflow
 just ui              # open the Temporal dashboard
 just dashboard       # open the Aspire observability dashboard
 ```
-
-## Observability
-
-OpenTelemetry-based: tracing, metrics, and structured logging via OTLP.
-
-- **Local dev**: Aspire Dashboard (included in `docker-compose.yml`) at `http://localhost:18888`. OTLP endpoint on port `4317`. Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` to enable; without it, a warning is logged and only console logs are emitted.
-- **Production**: Set `OTEL_EXPORTER_OTLP_ENDPOINT` to any OTLP-compatible collector.
-- **Temporal integration**: `TracingInterceptor` propagates trace context across workflow/activity boundaries.
-- **Custom metrics**: `pipeline.builds.total`, `pipeline.build.duration_ms`, `pipeline.validations.total` (defined in `Infrastructure/Telemetry.cs`).

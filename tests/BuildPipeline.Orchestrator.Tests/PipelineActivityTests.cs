@@ -88,7 +88,8 @@ public class PipelineActivityTests : IDisposable
             SimulateBuild: true,
             OtlpEndpoint: null,
             CopyStrategy: copyStrategy,
-            JunctionDirs: new HashSet<string>(["Assets", "Packages", "ProjectSettings"], StringComparer.OrdinalIgnoreCase));
+            JunctionDirs: new HashSet<string>(["Assets", "Packages", "ProjectSettings"], StringComparer.OrdinalIgnoreCase),
+            Timeouts: TimeoutConfig.Default);
 
     #region ValidateUnityProjectAsync — Real activities
 

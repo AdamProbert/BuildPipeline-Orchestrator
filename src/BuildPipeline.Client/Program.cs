@@ -62,7 +62,7 @@ var parameters = new Dictionary<string, string>();
 if (!string.IsNullOrEmpty(platformArg))
     parameters["platforms"] = platformArg;
 
-var runInput = PipelineWorkflowInput.CreateDefault(parameters: parameters);
+var runInput = PipelineWorkflowInput.CreateDefault(parameters: parameters, timeouts: config.Timeouts);
 
 try
 {
@@ -77,6 +77,9 @@ try
     });
 
     var workflowId = $"pipeline-{runInput.RunId}";
+
+    using var rootSpan = Telemetry.Source.StartActivity(workflowId);
+
     var handle = await client.StartWorkflowAsync(
         (PipelineWorkflow wf) => wf.RunAsync(runInput),
         new WorkflowOptions(id: workflowId, taskQueue: config.TaskQueue));

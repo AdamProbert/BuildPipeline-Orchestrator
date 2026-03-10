@@ -21,7 +21,8 @@ public sealed record PipelineConfig(
     bool SimulateBuild,
     string? OtlpEndpoint,
     ProjectCopyStrategy CopyStrategy,
-    HashSet<string> JunctionDirs)
+    HashSet<string> JunctionDirs,
+    Activities.TimeoutConfig Timeouts)
 {
     private static readonly HashSet<string> DefaultJunctionDirs =
         new(["Assets", "Packages", "ProjectSettings"], StringComparer.OrdinalIgnoreCase);
@@ -49,6 +50,14 @@ public sealed record PipelineConfig(
             ? DefaultJunctionDirs
             : new HashSet<string>(junctionDirsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
 
+        var timeouts = new Activities.TimeoutConfig(
+            ValidationTimeout: ParseTimeSpan(configuration["PIPELINE_VALIDATION_TIMEOUT_SECONDS"], Activities.TimeoutConfig.Default.ValidationTimeout),
+            BuildTimeout: ParseTimeSpan(configuration["PIPELINE_BUILD_TIMEOUT_MINUTES"], Activities.TimeoutConfig.Default.BuildTimeout, minutes: true),
+            ReportTimeout: ParseTimeSpan(configuration["PIPELINE_REPORT_TIMEOUT_SECONDS"], Activities.TimeoutConfig.Default.ReportTimeout),
+            LicensingMaxRetries: int.TryParse(configuration["PIPELINE_LICENSING_MAX_RETRIES"], out var lmr) ? lmr : Activities.TimeoutConfig.Default.LicensingMaxRetries,
+            LicensingRetryDelay: ParseTimeSpan(configuration["PIPELINE_LICENSING_RETRY_DELAY_SECONDS"], Activities.TimeoutConfig.Default.LicensingRetryDelay),
+            BuildRetryInterval: ParseTimeSpan(configuration["PIPELINE_BUILD_RETRY_INTERVAL_SECONDS"], Activities.TimeoutConfig.Default.BuildRetryInterval));
+
         return new PipelineConfig(
             temporalAddress,
             temporalNamespace,
@@ -59,7 +68,15 @@ public sealed record PipelineConfig(
             simulateBuild,
             otlpEndpoint,
             copyStrategy,
-            junctionDirs);
+            junctionDirs,
+            timeouts);
+    }
+
+    private static TimeSpan? ParseTimeSpan(string? value, TimeSpan? fallback, bool minutes = false)
+    {
+        if (double.TryParse(value, out var v))
+            return minutes ? TimeSpan.FromMinutes(v) : TimeSpan.FromSeconds(v);
+        return fallback;
     }
 
     private static string GetAssemblyDirectory()
