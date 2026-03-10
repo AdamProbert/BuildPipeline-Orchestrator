@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using BuildPipeline.Orchestrator.Config;
 using BuildPipeline.Orchestrator.Infrastructure;
@@ -193,10 +194,13 @@ public sealed class PipelineActivities : IPipelineActivities
         var timeouts = input.Timeouts ?? TimeoutConfig.Default;
         var maxLicensingRetries = timeouts.LicensingMaxRetries;
         var licensingDelay = timeouts.LicensingRetryDelay ?? TimeSpan.FromSeconds(30);
+        var ct = Temporalio.Activities.ActivityExecutionContext.Current.CancellationToken;
+
+        var issues = new ConcurrentBag<PipelineIssue>();
 
         for (var attempt = 1; attempt <= maxLicensingRetries + 1; attempt++)
         {
-            var (exitCode, stdout, stderr) = await RunUnityProcessAsync(unityPath, args, logFile);
+            var (exitCode, stdout, stderr) = await RunUnityProcessAsync(unityPath, args, logFile, issues, platformName, ct);
 
             if (exitCode == 0)
             {
@@ -211,7 +215,7 @@ public sealed class PipelineActivities : IPipelineActivities
                     new KeyValuePair<string, object?>("platform", platformName),
                     new KeyValuePair<string, object?>("status", "success"));
 
-                return new BuildArtifactResult(input.Platform, artifactPath + extension, DateTimeOffset.UtcNow);
+                return new BuildArtifactResult(input.Platform, artifactPath + extension, DateTimeOffset.UtcNow, issues.ToList());
             }
 
             var isLicensingError = IsLicensingError(stdout, stderr);
@@ -221,7 +225,7 @@ public sealed class PipelineActivities : IPipelineActivities
                 _logger.LogWarning(
                     "Unity licensing error on attempt {Attempt}/{MaxAttempts}. Retrying in {Delay}s...",
                     attempt, maxLicensingRetries + 1, licensingDelay.TotalSeconds);
-                await Task.Delay(licensingDelay);
+                await Task.Delay(licensingDelay, ct);
                 continue;
             }
 
@@ -245,7 +249,7 @@ public sealed class PipelineActivities : IPipelineActivities
         throw new InvalidOperationException("Unexpected state in build retry loop.");
     }
 
-    private async Task<(int ExitCode, string Stdout, string Stderr)> RunUnityProcessAsync(string unityPath, string args, string logFilePath)
+    private async Task<(int ExitCode, string Stdout, string Stderr)> RunUnityProcessAsync(string unityPath, string args, string logFilePath, ConcurrentBag<PipelineIssue> issues, string platformName, CancellationToken ct)
     {
         _logger.LogInformation("Invoking Unity: {UnityPath} {Args}", unityPath, args);
 
@@ -269,10 +273,24 @@ public sealed class PipelineActivities : IPipelineActivities
 
         // Tail the Unity editor log file in the background, forwarding lines through
         // ILogger so they inherit the current Activity trace/span IDs.
-        using var tailCts = new CancellationTokenSource();
-        var tailTask = TailUnityLogAsync(logFilePath, tailCts.Token);
+        using var tailCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var tailTask = TailUnityLogAsync(logFilePath, issues, platformName, tailCts.Token);
 
-        await process.WaitForExitAsync();
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Activity cancelled — killing Unity process tree (PID {Pid})", process.Id);
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            // Wait for the process to fully exit so it releases file handles (e.g. build log)
+            // before the cleanup activity tries to delete the project copy.
+            try { await process.WaitForExitAsync(); } catch { }
+            tailCts.Cancel();
+            try { await tailTask; } catch (OperationCanceledException) { }
+            throw;
+        }
 
         // Give the tail a moment to flush remaining lines, then stop
         await Task.Delay(500);
@@ -282,7 +300,7 @@ public sealed class PipelineActivities : IPipelineActivities
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
-    private async Task TailUnityLogAsync(string logFilePath, CancellationToken ct)
+    private async Task TailUnityLogAsync(string logFilePath, ConcurrentBag<PipelineIssue> issues, string platformName, CancellationToken ct)
     {
         // Wait for Unity to create the log file
         for (var i = 0; i < 60 && !File.Exists(logFilePath); i++)
@@ -307,9 +325,15 @@ public sealed class PipelineActivities : IPipelineActivities
                 // Classify Unity log lines by severity
                 if (line.Contains("Error", StringComparison.OrdinalIgnoreCase)
                     || line.StartsWith("Crash", StringComparison.OrdinalIgnoreCase))
+                {
                     _logger.LogError("[Unity] {Line}", line);
+                    issues.Add(new PipelineIssue(IssueSeverity.Error, line, platformName));
+                }
                 else if (line.Contains("Warning", StringComparison.OrdinalIgnoreCase))
+                {
                     _logger.LogWarning("[Unity] {Line}", line);
+                    issues.Add(new PipelineIssue(IssueSeverity.Warning, line, platformName));
+                }
                 else
                     _logger.LogInformation("[Unity] {Line}", line);
 
@@ -385,7 +409,7 @@ public sealed class PipelineActivities : IPipelineActivities
         return Task.FromResult(tempDir);
     }
 
-    public Task CleanupProjectCopyAsync(string projectCopyPath)
+    public async Task CleanupProjectCopyAsync(string projectCopyPath)
     {
         var expectedBase = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "unity-builds"));
         var fullPath = Path.GetFullPath(projectCopyPath);
@@ -393,18 +417,33 @@ public sealed class PipelineActivities : IPipelineActivities
         if (!fullPath.StartsWith(expectedBase, StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Refusing to delete path outside temp directory: {Path}", projectCopyPath);
-            return Task.CompletedTask;
+            return;
         }
 
-        if (Directory.Exists(fullPath))
+        if (!Directory.Exists(fullPath))
+            return;
+
+        _logger.LogInformation("Cleaning up cloned project at {Path}", fullPath);
+        // Remove junctions first so recursive delete doesn't follow them into original dirs
+        RemoveJunctions(fullPath);
+
+        // Retry deletion — killed Unity child processes may still be releasing file handles
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            _logger.LogInformation("Cleaning up cloned project at {Path}", fullPath);
-            // Remove junctions first so recursive delete doesn't follow them into original dirs
-            RemoveJunctions(fullPath);
-            Directory.Delete(fullPath, recursive: true);
+            try
+            {
+                Directory.Delete(fullPath, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                _logger.LogWarning(
+                    "Cleanup attempt {Attempt}/{Max} failed (files still locked), retrying in {Delay}s",
+                    attempt, maxAttempts, attempt);
+                await Task.Delay(TimeSpan.FromSeconds(attempt));
+            }
         }
-
-        return Task.CompletedTask;
     }
 
     private static void RemoveJunctions(string directory)

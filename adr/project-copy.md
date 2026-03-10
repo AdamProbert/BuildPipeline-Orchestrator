@@ -1,6 +1,6 @@
 # ADR: Junction-Based Project Copies for Concurrent Unity Builds
 
-**Status**: Proposed  
+**Status**: Accepted  
 **Date**: 2026-03-10
 
 ## Context

@@ -66,7 +66,7 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
                 var succeedPlatform = failPlatform.Value == BuildPlatform.Android ? BuildPlatform.iOS : BuildPlatform.Android;
                 var succeedExt = succeedPlatform == BuildPlatform.Android ? ".apk" : "";
                 mock.Setup(a => a.ExecutePlatformBuildAsync(It.Is<PlatformBuildInput>(p => p.Platform == succeedPlatform)))
-                    .ReturnsAsync(new BuildArtifactResult(succeedPlatform, $"/output/build{succeedExt}", DateTimeOffset.UtcNow));
+                    .ReturnsAsync(new BuildArtifactResult(succeedPlatform, $"/output/build{succeedExt}", DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>()));
             }
             else
             {
@@ -78,11 +78,11 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
         {
             mock.Setup(a => a.ExecutePlatformBuildAsync(It.Is<PlatformBuildInput>(p => p.Platform == BuildPlatform.Android)))
                 .ReturnsAsync(androidResult ?? new BuildArtifactResult(
-                    BuildPlatform.Android, "/output/build.apk", DateTimeOffset.UtcNow));
+                    BuildPlatform.Android, "/output/build.apk", DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>()));
 
             mock.Setup(a => a.ExecutePlatformBuildAsync(It.Is<PlatformBuildInput>(p => p.Platform == BuildPlatform.iOS)))
                 .ReturnsAsync(iosResult ?? new BuildArtifactResult(
-                    BuildPlatform.iOS, "/output/build-ios", DateTimeOffset.UtcNow));
+                    BuildPlatform.iOS, "/output/build-ios", DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>()));
         }
 
         mock.Setup(a => a.GenerateReportAsync(It.IsAny<PipelineRunSummary>()))
@@ -233,6 +233,60 @@ public class PipelineWorkflowTests : IClassFixture<TemporalFixture>
             () => RunWorkflowAsync(input, mock.Object));
 
         // Verify cleanup was called even though the build failed (finally semantics)
+        mock.Verify(a => a.CleanupProjectCopyAsync(It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PipelineWorkflow_Cancelled_CleanupStillRuns()
+    {
+        var buildStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mock = new Mock<IPipelineActivities>();
+
+        mock.Setup(a => a.ValidateUnityProjectAsync(It.IsAny<PipelineWorkflowInput>()))
+            .ReturnsAsync(new ProjectMetadata("/fake/project", "6000.2.7f2", DateTimeOffset.UtcNow));
+
+        mock.Setup(a => a.PrepareProjectCopyAsync(It.IsAny<PrepareProjectCopyInput>()))
+            .ReturnsAsync((PrepareProjectCopyInput input) =>
+                $"/tmp/unity-builds/{input.RunId}-{input.Platform.ToString().ToLowerInvariant()}");
+
+        // Simulate a long-running build that responds to cancellation
+        mock.Setup(a => a.ExecutePlatformBuildAsync(It.IsAny<PlatformBuildInput>()))
+            .Returns(async (PlatformBuildInput _) =>
+            {
+                buildStarted.SetResult();
+                var ct = Temporalio.Activities.ActivityExecutionContext.Current.CancellationToken;
+                await Task.Delay(TimeSpan.FromMinutes(10), ct);
+                return new BuildArtifactResult(BuildPlatform.Android, "/output/build.apk", DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>());
+            });
+
+        mock.Setup(a => a.CleanupProjectCopyAsync(It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        var taskQueue = $"test-{Guid.NewGuid()}";
+        using var worker = new TemporalWorker(
+            _env.Client,
+            new TemporalWorkerOptions(taskQueue)
+                .AddWorkflow<PipelineWorkflow>()
+                .AddAllActivities(mock.Object));
+
+        await worker.ExecuteAsync(async () =>
+        {
+            var input = new PipelineWorkflowInput("run-cancel",
+                new Dictionary<string, string> { ["platforms"] = "android" });
+
+            var handle = await _env.Client.StartWorkflowAsync(
+                (PipelineWorkflow wf) => wf.RunAsync(input),
+                new(id: $"test-{Guid.NewGuid()}", taskQueue: taskQueue));
+
+            // Wait for the build activity to start, then cancel
+            await buildStarted.Task;
+            await handle.CancelAsync();
+
+            await Assert.ThrowsAsync<Temporalio.Exceptions.WorkflowFailedException>(
+                () => handle.GetResultAsync());
+        });
+
+        // Verify cleanup was called despite cancellation
         mock.Verify(a => a.CleanupProjectCopyAsync(It.IsAny<string>()), Times.Once);
     }
 

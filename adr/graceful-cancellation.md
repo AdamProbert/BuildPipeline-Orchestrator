@@ -1,6 +1,6 @@
 # ADR: Graceful Unity Process Cleanup on Workflow Termination
 
-**Status**: Proposed  
+**Status**: Accepted  
 **Date**: 2026-03-10
 
 ## Context
@@ -55,3 +55,15 @@ Unity in batch mode may spawn child processes (shader compiler workers, IL2CPP, 
 
 **Included**: Process kill on cancel/terminate, detached cleanup scheduling, simulated activity cancellation, test coverage.  
 **Excluded**: Process kill on worker shutdown (already handled by `TemporalWorkerHost.StopAsync` cancelling the worker token).
+
+---
+
+## Update: Cleanup Retry on File Lock (2026-03-10)
+
+After killing the Unity process tree, child processes (shader compiler, IL2CPP, Android SDK tools) may not release file handles immediately — even after the parent process exits. This caused `CleanupProjectCopyAsync` to fail with `IOException` on files like `ArtifactDB` and `build-android.log`.
+
+**Changes**:
+- `PipelineActivities.RunUnityProcessAsync` — after `process.Kill(entireProcessTree: true)`, now calls `await process.WaitForExitAsync()` to wait for the main process to fully terminate before re-throwing.
+- `PipelineActivities.CleanupProjectCopyAsync` — `Directory.Delete` now retries up to 5 times with increasing delays (1s, 2s, 3s, 4s) on `IOException`, giving child processes time to release file handles.
+
+This is a belt-and-suspenders approach: the process wait handles the common case, and the retry loop handles edge cases where child processes outlive the parent.

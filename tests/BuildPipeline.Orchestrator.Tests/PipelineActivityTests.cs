@@ -376,7 +376,8 @@ public class PipelineActivityTests : IDisposable
         var summary = new PipelineRunSummary(
             RunId: "report-run-1",
             ProjectMetadata: new ProjectMetadata(projectDir, "6000.2.7f2", DateTimeOffset.UtcNow),
-            BuildResults: new[] { new BuildArtifactResult(BuildPlatform.Android, "/fake/path.apk", DateTimeOffset.UtcNow) },
+            BuildResults: new[] { new BuildArtifactResult(BuildPlatform.Android, "/fake/path.apk", DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>()) },
+            Issues: Array.Empty<PipelineIssue>(),
             ReportPath: "",
             CompletedAtUtc: DateTimeOffset.UtcNow);
 
@@ -400,6 +401,7 @@ public class PipelineActivityTests : IDisposable
             RunId: "report-idem",
             ProjectMetadata: new ProjectMetadata(projectDir, "6000.2.7f2", DateTimeOffset.UtcNow),
             BuildResults: Array.Empty<BuildArtifactResult>(),
+            Issues: Array.Empty<PipelineIssue>(),
             ReportPath: "",
             CompletedAtUtc: DateTimeOffset.UtcNow);
 

@@ -98,14 +98,23 @@ public record PlatformBuildInput(
     TimeoutConfig? Timeouts = null,
     string? ProjectPathOverride = null);
 
+public enum IssueSeverity { Warning, Error }
+
+public record PipelineIssue(
+    IssueSeverity Severity,
+    string Message,
+    string Source);
+
 public record BuildArtifactResult(
     BuildPlatform Platform,
     string ArtifactPath,
-    DateTimeOffset CompletedAtUtc);
+    DateTimeOffset CompletedAtUtc,
+    IReadOnlyList<PipelineIssue> Issues);
 
 public record PipelineRunSummary(
     string RunId,
     ProjectMetadata ProjectMetadata,
     IReadOnlyList<BuildArtifactResult> BuildResults,
+    IReadOnlyList<PipelineIssue> Issues,
     string ReportPath,
     DateTimeOffset CompletedAtUtc);

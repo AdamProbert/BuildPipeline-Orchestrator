@@ -67,8 +67,11 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
 
         FileSystemUtilities.EnsureDirectory(Path.GetDirectoryName(artifactPath)!);
 
-        // Simulate build duration
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        // Simulate build duration — respect cancellation when running inside Temporal
+        var ct = Temporalio.Activities.ActivityExecutionContext.HasCurrent
+            ? Temporalio.Activities.ActivityExecutionContext.Current.CancellationToken
+            : CancellationToken.None;
+        await Task.Delay(TimeSpan.FromSeconds(2), ct);
 
         await File.WriteAllTextAsync(artifactPath,
             $"Simulated {platformName} build artifact for {input.RunId}\n" +
@@ -84,7 +87,7 @@ public sealed class SimulatedPipelineActivities : IPipelineActivities
             new KeyValuePair<string, object?>("platform", platformName),
             new KeyValuePair<string, object?>("status", "success"));
 
-        return new BuildArtifactResult(input.Platform, artifactPath, DateTimeOffset.UtcNow);
+        return new BuildArtifactResult(input.Platform, artifactPath, DateTimeOffset.UtcNow, Array.Empty<PipelineIssue>());
     }
 
     public async Task<string> GenerateReportAsync(PipelineRunSummary summary)

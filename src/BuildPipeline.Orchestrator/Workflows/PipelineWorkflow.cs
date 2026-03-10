@@ -88,9 +88,12 @@ public class PipelineWorkflow
         Workflow.Logger.LogInformation("Builds completed: {Platforms}",
             string.Join(", ", buildResults.Select(r => r.Platform)));
 
+        // Aggregate all issues from individual builds
+        var allIssues = buildResults.SelectMany(r => r.Issues).ToList();
+
         // 4. Generate report
         var preliminarySummary = new PipelineRunSummary(
-            input.RunId, metadata, buildResults,
+            input.RunId, metadata, buildResults, allIssues,
             ReportPath: "", CompletedAtUtc: Workflow.UtcNow);
 
         var reportPath = await Workflow.ExecuteActivityAsync(
@@ -123,9 +126,13 @@ public class PipelineWorkflow
         }
         finally
         {
+            // Run cleanup even when the workflow is being cancelled/terminated.
+            // CancellationToken.None detaches from the workflow cancellation scope.
+            var cleanupOptions = GetCleanupOptions();
+            cleanupOptions.CancellationToken = CancellationToken.None;
             await Workflow.ExecuteActivityAsync(
                 (IPipelineActivities act) => act.CleanupProjectCopyAsync(clonedPath),
-                GetCleanupOptions());
+                cleanupOptions);
         }
     }
 
