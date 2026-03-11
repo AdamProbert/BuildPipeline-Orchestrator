@@ -81,27 +81,19 @@ Integration tests spin up an in-process Temporal server — no Docker required.
 
 ## All Commands
 
-Run `just` to list available commands:
+Run `just` to list available commands. Here's some of the main ones:
 
 | Command | Description |
 |---|---|
 | `just setup` | Start infra + restore + build |
 | `just worker` | Run the Temporal worker |
 | `just worker-sim` | Run worker in simulated mode |
-| `just worker-full` | Run worker with full (non-junction) copies |
-| `just run <platform>` | Trigger a workflow (fire-and-forget) |
-| `just e2e <platform>` | Trigger and wait for completion |
+| `just run <platform>` | Trigger a workflow |
 | `just test` | Run unit + integration tests |
-| `just test-verbose` | Run tests with detailed output |
 | `just ui` | Open Temporal dashboard |
 | `just status` | Show infrastructure status |
-| `just infra-up` | Start Temporal containers |
-| `just infra-down` | Stop Temporal containers |
-| `just infra-clean` | Stop containers and remove volumes |
-| `just restore` | Restore .NET dependencies |
+| `just infra-up` | Start infrastructure containers |
 | `just build` | Build the solution |
-| `just lint` | Check code formatting |
-| `just lint-fix` | Auto-fix formatting |
 | `just logs` | Follow Temporal server logs |
 
 ## Architecture
