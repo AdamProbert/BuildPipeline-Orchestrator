@@ -56,4 +56,3 @@ sequenceDiagram
 
     W-->>T: PipelineRunSummary
     T-->>CLI: Workflow complete
-```
